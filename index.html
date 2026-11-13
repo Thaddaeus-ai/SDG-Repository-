@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Overview · PollutionTracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- Sidebar: repeat on every page, or move into a layout/partial -->
+  <aside class="sidebar">
+    <a class="brand" href="index.html">
+      <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="20" fill="#f2b84b"/><path d="M20 8C15 14 12 18 12 22a8 8 0 0 0 16 0C28 18 25 14 20 8Z" fill="#1f3d2b"/></svg>
+      <span>Pollution<br>Tracker</span>
+    </a>
+    <a class="btn btn--accent" href="reports.html">Report pollution</a>
+    <nav class="nav" aria-label="Main">
+      <a href="index.html" aria-current="page">Overview</a>
+      <a href="reports.html">Map and reports</a>
+      <a href="carbon.html">My carbon</a>
+      <a href="learn.html">Learn</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="badges">
+        <span class="badge badge--sdg13">SDG 13 Climate Action</span>
+        <span class="badge badge--sdg4">SDG 4 Quality Education</span>
+      </div>
+      <div class="user">
+        <span class="avatar">AB</span>
+        <span><strong>Resident</strong><small>Barangay Carmen</small></span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="page-head">
+      <span class="eyebrow">Thursday, 12 November</span>
+      <h1>Cagayan de Oro, at a glance.</h1>
+      <p>What neighbors reported, what the air looks like, and what we are all adding to the carbon total. Sample data.</p>
+    </header>
+
+    <div class="row">
+      <!-- Air quality -->
+      <section class="card">
+        <div class="section-head"><h2 style="font-size:1rem;font-family:var(--font-body)">Air quality now</h2><span class="muted">Open-Meteo</span></div>
+        <div class="aqi">
+          <strong>42</strong>
+          <div><span class="tag">Good</span><div class="muted">US AQI</div></div>
+        </div>
+        <ul class="data-list">
+          <li><span>PM2.5</span><b>9 µg/m³</b></li>
+          <li><span>PM10</span><b>17 µg/m³</b></li>
+          <li><span>NO₂</span><b>12 µg/m³</b></li>
+          <li><span>O₃</span><b>48 µg/m³</b></li>
+        </ul>
+      </section>
+
+      <!-- Stat blocks -->
+      <div class="grid grid--2" style="flex-basis:440px; flex-grow:1.5">
+        <div class="kpi kpi--sun"><span>Reports submitted</span><strong>128</strong><small>Across 10 barangays</small></div>
+        <div class="kpi kpi--clay"><span>Awaiting review</span><strong>29</strong><small>Admins check each one</small></div>
+        <div class="kpi kpi--green"><span>Resolved</span><strong>31</strong><small>Cleaned up or fixed</small></div>
+        <div class="kpi kpi--river"><span>Community CO₂e</span><strong>18.4 t</strong><small>Logged by residents</small></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <section class="card">
+        <h2>Hotspot barangays</h2>
+        <!-- Render this list from your database. The bar width is count / highest count. -->
+        <ol class="rank">
+          <li><span class="n">1</span><div class="body"><div class="top"><b>Carmen</b><span>24 reports</span></div><div class="bar"><span style="width:100%"></span></div></div></li>
+          <li><span class="n">2</span><div class="body"><div class="top"><b>Macasandig</b><span>19 reports</span></div><div class="bar"><span style="width:79%"></span></div></div></li>
+          <li><span class="n">3</span><div class="body"><div class="top"><b>Bulua</b><span>17 reports</span></div><div class="bar"><span style="width:71%"></span></div></div></li>
+          <li><span class="n">4</span><div class="body"><div class="top"><b>Kauswagan</b><span>15 reports</span></div><div class="bar"><span style="width:63%"></span></div></div></li>
+          <li><span class="n">5</span><div class="body"><div class="top"><b>Lapasan</b><span>13 reports</span></div><div class="bar"><span style="width:54%"></span></div></div></li>
+        </ol>
+      </section>
+
+      <section class="card" style="flex-grow:1.4; flex-basis:460px">
+        <div class="section-head"><h2>Community carbon, per week</h2><span class="muted">Tonnes CO₂e · last 8 weeks</span></div>
+        <!-- Placeholder chart. Swap for Chart.js or your own data once the API exists. -->
+        <svg class="chart" viewBox="0 0 570 226" role="img" aria-label="Weekly community carbon rising from 2.0 tonnes in week 1 to 2.8 tonnes in week 8">
+          <g stroke="#d9d0b8" stroke-width="1.5" stroke-dasharray="4 5"><path d="M30 190H550"/><path d="M30 150H550"/><path d="M30 110H550"/><path d="M30 70H550"/></g>
+          <path d="M40 136.7L110 126L180 136.7L250 104.7L320 115.3L390 72.7L460 94L530 51.3V190H40Z" fill="#f2b84b" fill-opacity=".45"/>
+          <path d="M40 136.7L110 126L180 136.7L250 104.7L320 115.3L390 72.7L460 94L530 51.3" fill="none" stroke="#1f2a1f" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+          <g fill="#fffdf8" stroke="#1f2a1f" stroke-width="3"><circle cx="40" cy="136.7" r="5"/><circle cx="110" cy="126" r="5"/><circle cx="180" cy="136.7" r="5"/><circle cx="250" cy="104.7" r="5"/><circle cx="320" cy="115.3" r="5"/><circle cx="390" cy="72.7" r="5"/><circle cx="460" cy="94" r="5"/><circle cx="530" cy="51.3" r="6" fill="#b4471f"/></g>
+          <g font-family="DM Sans, sans-serif" font-size="12" fill="#4d5a4e" text-anchor="middle"><text x="40" y="212">W1</text><text x="110" y="212">W2</text><text x="180" y="212">W3</text><text x="250" y="212">W4</text><text x="320" y="212">W5</text><text x="390" y="212">W6</text><text x="460" y="212">W7</text><text x="530" y="212">W8</text></g>
+        </svg>
+        <div class="legend">
+          <span style="--dot:#b4471f">Transport 9.6 t</span>
+          <span style="--dot:#1f5e8c">Electricity 7.1 t</span>
+          <span style="--dot:#7c7766">Other 1.7 t</span>
+        </div>
+      </section>
+    </div>
+
+    <section>
+      <div class="section-head" style="margin-bottom:16px"><h2 style="font-size:1.875rem">Three things to try this week</h2><a href="learn.html">More in Learn</a></div>
+      <div class="grid grid--3">
+        <a class="card card--flat action" href="carbon.html"><span class="num">1</span><b>Walk or cycle one short trip</b><span class="muted">Log it and see the commute line in your footprint drop.</span></a>
+        <a class="card card--flat action" href="reports.html"><span class="num" style="background:var(--river);color:#fff">2</span><b>Check the drain or creek near you</b><span class="muted">See litter or oily water? Take a photo and file a report.</span></a>
+        <a class="card card--flat action" href="carbon.html"><span class="num" style="background:var(--green);color:#fff">3</span><b>Unplug standby appliances</b><span class="muted">Compare tomorrow's electricity entry with today's.</span></a>
+      </div>
+    </section>
+  </main>
+</div>
+</body>
+</html>
