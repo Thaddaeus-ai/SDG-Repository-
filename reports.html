@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Map and reports · PollutionTracker</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* Page-specific additions. Colors reuse the variables from style.css. */
+    .tag--rejected { background: var(--clay); }
+    .tag--carbon { background: var(--rust); }
+    button.chip { font: 700 0.9375rem var(--font-body); color: var(--ink); cursor: pointer; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: center; justify-content: space-between; }
+    .toolbar .field { display: flex; align-items: center; gap: 10px; }
+    .toolbar select { width: auto; min-width: 190px; }
+    .map .leaflet-container { position: absolute; inset: 0; background: #efe6d2; font-family: var(--font-body); }
+    .map-legend { z-index: 1000; }
+    .pin {
+      width: 22px; height: 22px; border-radius: 50%;
+      background: var(--pin); border: 3px solid var(--ink); box-shadow: 2px 2px 0 var(--ink);
+    }
+    .pin--picked { --pin: var(--paper); width: 26px; height: 26px; }
+    .pin--active { outline: 3px solid var(--river); outline-offset: 3px; }
+    .leaflet-popup-content-wrapper { border: var(--border); border-radius: 16px; box-shadow: 4px 4px 0 var(--ink); }
+    .leaflet-popup-content { margin: 14px 16px; font-size: 0.9375rem; line-height: 1.4; }
+    .leaflet-popup-content h3 { font-size: 1.0625rem; margin-bottom: 6px; }
+    .report { cursor: pointer; }
+    .report.is-active { outline: 3px solid var(--river); outline-offset: 2px; }
+    .report .photo { display: flex; align-items: flex-start; gap: 8px; background-size: cover; background-position: center; }
+    .report h3 { font-size: 1.0625rem; }
+    .reason { padding: 10px 12px; border-left: 4px solid var(--clay); background: #f3eddd; font-size: 0.875rem; }
+    .report-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); }
+    .field-stack { display: flex; flex-direction: column; gap: 6px; }
+    .coords { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .notice { padding: 12px 14px; border: var(--border); border-radius: 12px; background: var(--paper); font-size: 0.9375rem; }
+    .notice--warn { background: #fbe9c3; }
+    .notice--ok { background: #dcebdc; }
+    .notice--error { background: #f6d9d0; }
+    .empty { padding: 28px; text-align: center; border: 2px dashed var(--line); border-radius: var(--radius); color: var(--muted); }
+    .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">
+      <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="20" fill="#f2b84b"/><path d="M20 8C15 14 12 18 12 22a8 8 0 0 0 16 0C28 18 25 14 20 8Z" fill="#1f3d2b"/></svg>
+      <span>Pollution<br>Tracker</span>
+    </a>
+    <a class="btn btn--accent" href="#new-report">Report pollution</a>
+    <nav class="nav" aria-label="Main">
+      <a href="index.html">Overview</a>
+      <a href="reports.html" aria-current="page">Map and reports</a>
+      <a href="carbon.html">My carbon</a>
+      <a href="learn.html">Learn</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="badges">
+        <span class="badge badge--sdg13">SDG 13 Climate Action</span>
+        <span class="badge badge--sdg4">SDG 4 Quality Education</span>
+      </div>
+      <div class="user">
+        <span class="avatar">AB</span>
+        <span><strong>Resident</strong><small>Barangay Carmen</small></span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="page-head">
+      <span class="eyebrow">Cagayan de Oro</span>
+      <h1>See what neighbors reported.</h1>
+      <p>Each pin is a pollution report. Select a pin or a card to see its details, or click the map to place a new report.</p>
+    </header>
+
+    <div id="data-notice" class="notice notice--warn" role="status" hidden></div>
+
+    <div class="toolbar">
+      <div class="chips" id="status-chips" role="group" aria-label="Filter by status">
+        <button type="button" class="chip" data-status="all" aria-current="true">All</button>
+        <button type="button" class="chip" data-status="pending" aria-current="false">Pending</button>
+        <button type="button" class="chip" data-status="verified" aria-current="false">Verified</button>
+        <button type="button" class="chip" data-status="resolved" aria-current="false">Resolved</button>
+        <button type="button" class="chip" data-status="rejected" aria-current="false">Rejected</button>
+      </div>
+      <div class="field">
+        <label for="filter-barangay">Barangay</label>
+        <select id="filter-barangay"></select>
+      </div>
+    </div>
+
+    <div class="map">
+      <div id="map" role="application" aria-label="Map of pollution reports in Cagayan de Oro"></div>
+      <div class="map-legend" aria-hidden="true">
+        <span>🟡 Pending</span><span>🔵 Verified</span><span>🟢 Resolved</span><span>🟠 Rejected</span>
+      </div>
+    </div>
+
+    <div class="row">
+      <section class="card" id="new-report" style="flex: 1 1 360px; max-width: 480px">
+        <h2>Submit a report</h2>
+        <p class="muted">Click the map to set the location, or enter the coordinates. New reports start as pending until an admin reviews them.</p>
+        <form id="report-form" class="field-stack" style="gap:14px" novalidate>
+          <div class="field-stack">
+            <label for="f-category">What are you reporting?</label>
+            <select id="f-category" required>
+              <option value="water_pollution">Water pollution</option>
+              <option value="carbon_emission">Carbon emission source</option>
+            </select>
+          </div>
+          <div class="field-stack">
+            <label for="f-barangay">Barangay</label>
+            <select id="f-barangay" required></select>
+          </div>
+          <div class="field-stack">
+            <label for="f-description">What did you see?</label>
+            <textarea id="f-description" rows="4" required minlength="10" placeholder="Describe the source, how big it is, and when you noticed it."></textarea>
+          </div>
+          <div class="coords">
+            <div class="field-stack"><label for="f-lat">Latitude</label><input id="f-lat" type="number" step="any" min="-90" max="90" required></div>
+            <div class="field-stack"><label for="f-lng">Longitude</label><input id="f-lng" type="number" step="any" min="-180" max="180" required></div>
+          </div>
+          <div class="field-stack">
+            <label for="f-photo">Photo link (optional)</label>
+            <input id="f-photo" type="text" inputmode="url" placeholder="https://">
+          </div>
+          <div id="form-msg" class="notice" role="status" hidden></div>
+          <button class="btn btn--dark btn--block" type="submit">Submit report</button>
+        </form>
+      </section>
+
+      <section style="flex: 2 1 460px">
+        <div class="section-head" style="margin-bottom:16px">
+          <h2>Reports</h2>
+          <span class="muted" id="count" aria-live="polite"></span>
+        </div>
+        <div id="report-list" class="report-grid"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // ---------- Settings ----------
+  var API_BASE = 'http://localhost:3000/api';          // matches servers[0] in the OpenAPI file
+  var CDO = [8.4542, 124.6319];
+  var BARANGAYS = ['Balulang', 'Bulua', 'Carmen', 'Consolacion', 'Gusa', 'Kauswagan', 'Lapasan', 'Macasandig', 'Nazareth', 'Puerto'];
+  var STATUS_COLOR = { pending: '#f2b84b', verified: '#1f5e8c', resolved: '#2f6b45', rejected: '#b4471f' };
+  var STATUS_LABEL = { pending: 'Pending', verified: 'Verified', resolved: 'Resolved', rejected: 'Rejected' };
+  var CATEGORY_LABEL = { water_pollution: 'Water pollution', carbon_emission: 'Carbon emission' };
+
+  // Sample data shown only when the API cannot be reached.
+  var SAMPLE = [
+    { id: 's1', category: 'water_pollution', description: 'Plastic waste and oily film along the creek near the market.', barangay: 'Carmen', location: { latitude: 8.4836, longitude: 124.6497 }, status: 'pending', statusReason: null, createdAt: '2026-11-10T08:00:00Z' },
+    { id: 's2', category: 'carbon_emission', description: 'Idling trucks at the loading area all morning, thick black smoke.', barangay: 'Macasandig', location: { latitude: 8.4620, longitude: 124.6580 }, status: 'verified', statusReason: null, createdAt: '2026-11-08T07:30:00Z' },
+    { id: 's3', category: 'water_pollution', description: 'Garbage clogging the drainage canal beside the school.', barangay: 'Lapasan', location: { latitude: 8.4780, longitude: 124.6560 }, status: 'resolved', statusReason: 'The barangay clean-up crew cleared the canal on 2026-11-11.', createdAt: '2026-11-05T09:15:00Z' },
+    { id: 's4', category: 'carbon_emission', description: 'Burning of leaves and plastic at a vacant lot.', barangay: 'Bulua', location: { latitude: 8.4850, longitude: 124.6070 }, status: 'rejected', statusReason: 'The photo does not show a burning source at this location.', createdAt: '2026-11-04T16:40:00Z' }
+  ];
+
+  // ---------- State ----------
+  var reports = [];
+  var filter = { status: 'all', barangay: 'all' };
+  var markers = {};          // id -> Leaflet marker
+  var activeId = null;
+  var pickMarker = null;
+
+  // ---------- Helpers ----------
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function $(id) { return document.getElementById(id); }
+  function safeUrl(u) {
+    try { var x = new URL(u); return (x.protocol === 'http:' || x.protocol === 'https:') ? x.href : null; }
+    catch (e) { return null; }
+  }
+  function fmtDate(iso) {
+    var d = new Date(iso);
+    return isNaN(d) ? '' : d.toLocaleDateString('en-PH', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+  function getToken() {
+    try { return localStorage.getItem('token'); } catch (e) { return null; }
+  }
+  function showNotice(node, text, kind) {
+    node.textContent = text;
+    node.className = 'notice' + (kind ? ' notice--' + kind : '');
+    node.hidden = false;
+  }
+
+  // ---------- Map ----------
+  var map = L.map('map', { scrollWheelZoom: false }).setView(CDO, 13);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    referrerPolicy: 'strict-origin-when-cross-origin', // OSM requires a Referer header; works only over http(s), not file://
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+  map.on('focus', function () { map.scrollWheelZoom.enable(); });
+  map.on('blur', function () { map.scrollWheelZoom.disable(); });
+
+  function pinIcon(status, active) {
+    return L.divIcon({
+      className: '',
+      html: '<div class="pin' + (active ? ' pin--active' : '') + '" style="--pin:' + STATUS_COLOR[status] + '"></div>',
+      iconSize: [22, 22], iconAnchor: [11, 11], popupAnchor: [0, -12]
+    });
+  }
+
+  function popupContent(r) {
+    var box = el('div');
+    box.appendChild(el('h3', '', CATEGORY_LABEL[r.category] || r.category));
+    var tag = el('span', 'tag tag--' + r.status, STATUS_LABEL[r.status]);
+    box.appendChild(tag);
+    box.appendChild(el('p', '', r.description)).style.margin = '8px 0 4px';
+    box.appendChild(el('p', 'muted', 'Barangay ' + r.barangay + ' · ' + fmtDate(r.createdAt)));
+    return box;
+  }
+
+  // ---------- Rendering ----------
+  function visibleReports() {
+    return reports.filter(function (r) {
+      return (filter.status === 'all' || r.status === filter.status) &&
+             (filter.barangay === 'all' || r.barangay === filter.barangay);
+    });
+  }
+
+  function render() {
+    var list = visibleReports();
+
+    // markers
+    Object.keys(markers).forEach(function (id) { map.removeLayer(markers[id]); });
+    markers = {};
+    list.forEach(function (r) {
+      var m = L.marker([r.location.latitude, r.location.longitude], { icon: pinIcon(r.status, r.id === activeId), title: r.description })
+        .addTo(map).bindPopup(popupContent(r));
+      m.on('click', function () { setActive(r.id, false); });
+      markers[r.id] = m;
+    });
+
+    // cards
+    var wrap = $('report-list');
+    wrap.textContent = '';
+    if (!list.length) {
+      wrap.appendChild(el('div', 'empty', 'No reports match these filters. Try another status or barangay.'));
+    }
+    list.forEach(function (r) {
+      var card = el('article', 'card report' + (r.id === activeId ? ' is-active' : ''));
+      card.tabIndex = 0;
+      card.dataset.id = r.id;
+
+      var photo = el('div', 'photo');
+      var url = r.photoUrl && safeUrl(r.photoUrl);
+      if (url) photo.style.backgroundImage = 'url("' + encodeURI(url) + '")';
+      photo.appendChild(el('span', 'tag tag--' + r.status, STATUS_LABEL[r.status]));
+      photo.appendChild(el('span', 'tag ' + (r.category === 'water_pollution' ? 'tag--water' : 'tag--carbon'), CATEGORY_LABEL[r.category] || r.category));
+      card.appendChild(photo);
+
+      var body = el('div', 'body');
+      body.appendChild(el('h3', '', 'Barangay ' + r.barangay));
+      body.appendChild(el('p', '', r.description));
+      if (r.statusReason) body.appendChild(el('p', 'reason', r.statusReason));
+      body.appendChild(el('p', 'muted', 'Reported ' + fmtDate(r.createdAt)));
+      card.appendChild(body);
+
+      card.addEventListener('click', function () { setActive(r.id, true); });
+      card.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActive(r.id, true); }
+      });
+      wrap.appendChild(card);
+    });
+
+    $('count').textContent = list.length + (list.length === 1 ? ' report' : ' reports');
+  }
+
+  function setActive(id, fly) {
+    activeId = id;
+    var r = reports.filter(function (x) { return x.id === id; })[0];
+    Object.keys(markers).forEach(function (k) {
+      markers[k].setIcon(pinIcon(reports.filter(function (x) { return x.id === k; })[0].status, k === id));
+    });
+    document.querySelectorAll('.report').forEach(function (c) {
+      c.classList.toggle('is-active', c.dataset.id === id);
+    });
+    if (r && fly && markers[id]) {
+      map.flyTo([r.location.latitude, r.location.longitude], Math.max(map.getZoom(), 15), { duration: 0.6 });
+      markers[id].openPopup();
+      $('map').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+
+  // ---------- Filters ----------
+  function fillBarangays(select, withAll) {
+    select.textContent = '';
+    if (withAll) { var all = el('option', '', 'All barangays'); all.value = 'all'; select.appendChild(all); }
+    BARANGAYS.forEach(function (b) { var o = el('option', '', b); o.value = b; select.appendChild(o); });
+  }
+  fillBarangays($('filter-barangay'), true);
+  fillBarangays($('f-barangay'), false);
+  $('f-barangay').value = 'Carmen';
+
+  $('status-chips').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-status]');
+    if (!btn) return;
+    filter.status = btn.dataset.status;
+    document.querySelectorAll('#status-chips .chip').forEach(function (c) {
+      c.setAttribute('aria-current', c === btn ? 'true' : 'false');
+    });
+    render();
+  });
+  $('filter-barangay').addEventListener('change', function (e) { filter.barangay = e.target.value; render(); });
+
+  // ---------- Pick a location ----------
+  function setPick(lat, lng) {
+    $('f-lat').value = lat.toFixed(6);
+    $('f-lng').value = lng.toFixed(6);
+    if (!pickMarker) {
+      pickMarker = L.marker([lat, lng], {
+        draggable: true,
+        icon: L.divIcon({ className: '', html: '<div class="pin pin--picked"></div>', iconSize: [26, 26], iconAnchor: [13, 13] })
+      }).addTo(map);
+      pickMarker.on('dragend', function () { var p = pickMarker.getLatLng(); setPick(p.lat, p.lng); });
+    } else {
+      pickMarker.setLatLng([lat, lng]);
+    }
+  }
+  map.on('click', function (e) { setPick(e.latlng.lat, e.latlng.lng); });
+  function syncFromInputs() {
+    var lat = parseFloat($('f-lat').value), lng = parseFloat($('f-lng').value);
+    if (isFinite(lat) && isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      setPick(lat, lng); map.panTo([lat, lng]);
+    }
+  }
+  $('f-lat').addEventListener('change', syncFromInputs);
+  $('f-lng').addEventListener('change', syncFromInputs);
+
+  // ---------- API ----------
+  function authHeaders() {
+    var h = { 'Content-Type': 'application/json' };
+    var t = getToken();
+    if (t) h.Authorization = 'Bearer ' + t;
+    return h;
+  }
+
+  function loadReports() {
+    var notice = $('data-notice');
+    // GET /reports returns { reports, page, limit } (see OpenAPI file)
+    fetch(API_BASE + '/reports?limit=100', { headers: authHeaders() })
+      .then(function (res) {
+        if (res.status === 401) { throw new Error('auth'); }
+        if (!res.ok) { throw new Error('http ' + res.status); }
+        return res.json();
+      })
+      .then(function (data) { reports = data.reports || []; notice.hidden = true; render(); })
+      .catch(function (err) {
+        reports = SAMPLE.slice();
+        showNotice(notice, err.message === 'auth'
+          ? 'Log in to see your reports. Showing sample reports for now.'
+          : 'The API is not reachable. Showing sample reports for now.', 'warn');
+        render();
+      });
+  }
+
+  // ---------- Submit ----------
+  $('report-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var msg = $('form-msg');
+    var desc = $('f-description').value.trim();
+    var lat = parseFloat($('f-lat').value), lng = parseFloat($('f-lng').value);
+    var photo = $('f-photo').value.trim();
+
+    if (desc.length < 10) { showNotice(msg, 'Describe what you saw in at least 10 characters.', 'error'); return; }
+    if (!isFinite(lat) || !isFinite(lng)) { showNotice(msg, 'Click the map or enter a latitude and longitude.', 'error'); return; }
+    if (photo && !safeUrl(photo)) { showNotice(msg, 'Enter a photo link that starts with http:// or https://, or leave it empty.', 'error'); return; }
+
+    var body = {
+      category: $('f-category').value,
+      description: desc,
+      barangay: $('f-barangay').value,
+      location: { latitude: lat, longitude: lng }
+    };
+    if (photo) body.photoUrl = photo;
+
+    function done(report, note, kind) {
+      reports.unshift(report);
+      filter = { status: 'all', barangay: 'all' };
+      $('filter-barangay').value = 'all';
+      document.querySelectorAll('#status-chips .chip').forEach(function (c) {
+        c.setAttribute('aria-current', c.dataset.status === 'all' ? 'true' : 'false');
+      });
+      $('f-description').value = ''; $('f-photo').value = '';
+      showNotice(msg, note, kind);
+      render();
+      setActive(report.id, true);
+    }
+
+    fetch(API_BASE + '/reports', { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) })
+      .then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (data) { return { res: res, data: data }; });
+      })
+      .then(function (out) {
+        if (out.res.status === 201) { done(out.data, 'Report submitted. An admin will review it soon.', 'ok'); }
+        else if (out.res.status === 401) { showNotice(msg, 'Log in before you submit a report.', 'error'); }
+        else if (out.res.status === 400) { showNotice(msg, out.data.message || 'Some details are missing or invalid. Check the form and try again.', 'error'); }
+        else { showNotice(msg, 'Something went wrong on the server. Try again in a moment.', 'error'); }
+      })
+      .catch(function () {
+        // API offline: keep the report on this page only so the form can still be tried out.
+        done({
+          id: 'local-' + Date.now(), category: body.category, description: body.description, barangay: body.barangay,
+          location: body.location, photoUrl: body.photoUrl, status: 'pending', statusReason: null, createdAt: new Date().toISOString()
+        }, 'The API is not reachable, so this report is shown here only and was not saved.', 'warn');
+      });
+  });
+
+  loadReports();
+})();
+</script>
+</body>
+</html>

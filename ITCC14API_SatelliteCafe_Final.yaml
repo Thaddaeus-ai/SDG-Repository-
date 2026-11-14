@@ -1,0 +1,1398 @@
+# Revision Summary
+# 1. Report edits and moderation reasons
+#    - PUT /reports/{reportId}: only the owner may edit. Editing a verified, rejected or resolved report resets it
+#      to "pending" (sent back for admin review) and clears the earlier reason. Added 403.
+#    - PATCH /reports/{reportId}/status: a "reason" is now REQUIRED when status is "rejected" or "resolved".
+#      Added allowed status transitions and a 409 for invalid ones, and "statusReason" on the Report response.
+#    - Schemas changed: ReportStatusUpdate (oneOf ReportVerifyRequest / ReportReasonedStatusRequest), Report.
+# 2. Ownership restrictions
+#    - GET/DELETE /reports/{reportId}: owner or admin only (same rule as GET /reports). Added 403.
+#    - GET/PUT/DELETE /carbon-logs/{logId}: owner only (same rule as GET /carbon-logs). Added 403.
+# 3. Carbon-emission calculation
+#    - POST /carbon-logs now documents the formula, emission factors (kg CO2e per km and per kWh), units, rounding,
+#      handling of "other" (default 0.15 kg/km), and the rule of ONE log per user per date (409 on duplicates).
+#    - Also applied to PUT /carbon-logs/{logId} and GET /carbon-logs/summary. Schema changed: CarbonLogCreate.
+# 4. GET /articles: added 400 response (using the Error schema) plus page and limit query parameters.
+# 5. Account deletion: DELETE /users/{userId} now states what happens to reports (kept, anonymized), carbon logs
+#    (deleted), feedback (deleted) and dashboard totals (recalculated). Added 409 for self/last-admin deletion.
+#    Schema changed: Report.userId is nullable. GET /dashboard/stat description updated.
+# 6. Climate information: the frontend calls an external weather provider directly; this API has no climate
+#    route. Documented in info.description.
+# 7. Dashboard (frontend alignment): GET /dashboard/stat now accepts "weeks" (1-26, default 8) and returns
+#    communityCarbonByWeek (weekly totals) and communityCarbonBySource (transport vs electricity), plus a 400
+#    response. Schema changed: DashboardStats (new fields are optional additions).
+# Other: added 400 to POST /auth/login, GET /reports, GET /carbon-logs and GET /carbon-logs/summary; added the shared
+#    Conflict response.
+
+openapi: 3.0.3
+info:
+  title: PollutionTracker API
+  description: >
+    REST API for PollutionTracker, a web application where Cagayan de Oro
+    residents report water pollution and carbon-emission sources, record daily
+    activities, view climate information, and read educational articles.
+
+    **Climate information.** This API does not provide a climate or weather
+    endpoint. The frontend requests current weather and climate data directly
+    from a third-party weather provider (for example Open-Meteo or
+    OpenWeatherMap) using Cagayan de Oro coordinates, and displays it
+    alongside data from this API. Provider API keys, if required, are kept in
+    the frontend configuration and are never sent to or stored by this API.
+
+    **Roles.** Two roles exist: `user` (resident) and `admin`. Residents can
+    access only their own reports and carbon logs; admins can moderate all
+    reports but cannot read individual carbon logs.
+  version: 1.0.0
+  contact:
+    name: Satellite Cafe
+servers:
+  - url: http://localhost:3000/api
+    description: Local Express development server
+
+tags:
+  - name: Authentication
+    description: Registration and login for residents and administrators.
+  - name: Reports
+    description: Pollution reports submitted by residents and moderated by admins.
+  - name: Carbon Logs
+    description: Personal daily activity logs and calculated emissions.
+  - name: Articles
+    description: Educational articles and pollution-reduction tips.
+  - name: Feedback
+    description: Feedback submitted by residents and reviewed by admins.
+  - name: Users
+    description: Admin management of user accounts.
+  - name: Dashboard
+    description: Community pollution and carbon-emission summaries.
+
+paths:
+  /auth/register:
+    post:
+      security: []
+      tags: [Authentication]
+      summary: Register a new user account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              fullName: Maria Santos
+              email: maria@example.com
+              password: StrongPass123
+              barangay: Carmen
+      responses:
+        '201':
+          description: Account successfully created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+              example:
+                message: Registration successful.
+                token: sample.jwt.token
+                user:
+                  id: 64f123456789abcdef123456
+                  fullName: Maria Santos
+                  email: maria@example.com
+                  role: user
+                  barangay: Carmen
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Email address is already registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /auth/login:
+    post:
+      security: []
+      tags: [Authentication]
+      summary: Log in and receive an authentication token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: maria@example.com
+              password: StrongPass123
+      responses:
+        '200':
+          description: Login successful.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+              example:
+                message: Login successful.
+                token: sample.jwt.token
+                user:
+                  id: 64f123456789abcdef123456
+                  fullName: Maria Santos
+                  email: maria@example.com
+                  role: user
+                  barangay: Carmen
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /reports:
+    get:
+      tags: [Reports]
+      summary: List pollution reports
+      description: >
+        Residents receive only their own reports; admins receive all reports.
+        The same ownership rule applies to GET /reports/{reportId}.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Filter reports by moderation status.
+          schema:
+            type: string
+            enum: [pending, verified, rejected, resolved]
+        - name: barangay
+          in: query
+          required: false
+          description: Filter reports by barangay.
+          schema:
+            type: string
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+      responses:
+        '200':
+          description: Reports retrieved successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reports:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Report'
+                  page:
+                    type: integer
+                  limit:
+                    type: integer
+              example:
+                reports:
+                  - id: 670abc1234567890abcdef12
+                    userId: 64f123456789abcdef123456
+                    category: water_pollution
+                    description: Waste was observed near the river.
+                    barangay: Carmen
+                    location:
+                      latitude: 8.481
+                      longitude: 124.647
+                    photoUrl: https://example.com/report-photo.jpg
+                    status: pending
+                    createdAt: '2026-11-03T08:00:00Z'
+                page: 1
+                limit: 10
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Reports]
+      summary: Submit a pollution report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportCreate'
+            example:
+              category: water_pollution
+              description: Waste was observed near the river.
+              barangay: Carmen
+              location:
+                latitude: 8.481
+                longitude: 124.647
+              photoUrl: https://example.com/report-photo.jpg
+      responses:
+        '201':
+          description: Report submitted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+              example:
+                id: 670abc1234567890abcdef12
+                userId: 64f123456789abcdef123456
+                category: water_pollution
+                description: Waste was observed near the river.
+                barangay: Carmen
+                location:
+                  latitude: 8.481
+                  longitude: 124.647
+                photoUrl: https://example.com/report-photo.jpg
+                status: pending
+                createdAt: '2026-11-03T08:00:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /reports/{reportId}:
+    parameters:
+      - name: reportId
+        in: path
+        required: true
+        description: Unique ID of the pollution report.
+        schema:
+          type: string
+    get:
+      tags: [Reports]
+      summary: Get a pollution report by ID
+      description: >
+        Residents can retrieve only reports they submitted; admins can
+        retrieve any report. A resident requesting another user's report
+        receives 403. This matches the filtering of GET /reports.
+      responses:
+        '200':
+          description: Report retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Reports]
+      summary: Update an owned pollution report
+      description: |
+        Only the report owner can edit the report contents. Admins do not edit
+        report contents; they moderate through PATCH /reports/{reportId}/status.
+
+        **Re-review rule:** if the report is currently `verified`, `rejected`
+        or `resolved`, a successful edit sends it back for admin review: the
+        server sets `status` to `pending` and clears `statusReason`. A report
+        that is already `pending` stays `pending`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportUpdate'
+            example:
+              category: water_pollution
+              description: Updated description of the pollution observed.
+              barangay: Carmen
+              location:
+                latitude: 8.481
+                longitude: 124.647
+              photoUrl: https://example.com/updated-photo.jpg
+      responses:
+        '200':
+          description: Report updated. Verified, rejected or resolved reports are reset to pending for admin review.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+              example:
+                id: 670abc1234567890abcdef12
+                userId: 64f123456789abcdef123456
+                category: water_pollution
+                description: Updated description of the pollution observed.
+                barangay: Carmen
+                location:
+                  latitude: 8.481
+                  longitude: 124.647
+                photoUrl: https://example.com/updated-photo.jpg
+                status: pending
+                statusReason: null
+                createdAt: '2026-11-03T08:00:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Reports]
+      summary: Delete an owned pollution report
+      description: >
+        The report owner or an admin can delete the report. Any other
+        authenticated user receives 403. Deleting a report lowers the
+        dashboard report totals on the next request.
+      responses:
+        '200':
+          description: Report deleted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+              example:
+                message: Report deleted successfully.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /reports/{reportId}/status:
+    patch:
+      tags: [Reports]
+      summary: Update a report's moderation status
+      description: |
+        Admin-only operation to verify, reject, or resolve a report.
+
+        **Reason:** `reason` is required when `status` is `rejected` or
+        `resolved`, so the resident can see why. It is optional and ignored
+        for `verified`. The reason is returned as `statusReason` on the report.
+
+        **Allowed transitions:**
+        - `pending` to `verified` or `rejected`
+        - `verified` to `resolved` or `rejected`
+        - `rejected` and `resolved` are final for admins. Only the owner editing
+          the report (PUT /reports/{reportId}) returns it to `pending`.
+
+        Any other transition returns 409.
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          description: Unique ID of the pollution report.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportStatusUpdate'
+            examples:
+              verify:
+                summary: Verify a pending report
+                value:
+                  status: verified
+              reject:
+                summary: Reject a report (reason required)
+                value:
+                  status: rejected
+                  reason: The photo and location do not show a pollution source.
+              resolve:
+                summary: Resolve a verified report (reason required)
+                value:
+                  status: resolved
+                  reason: The barangay clean-up crew removed the waste on 2026-11-10.
+      responses:
+        '200':
+          description: Report status updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /carbon-logs:
+    get:
+      tags: [Carbon Logs]
+      summary: List the authenticated user's carbon logs
+      description: >
+        Returns only the authenticated user's own logs, for every role. Admins
+        also see only their own logs; community totals are available through
+        GET /dashboard/stat. GET /carbon-logs/{logId} follows the same rule.
+      parameters:
+        - name: date
+          in: query
+          required: false
+          description: Filter logs by date in YYYY-MM-DD format.
+          schema:
+            type: string
+            format: date
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+      responses:
+        '200':
+          description: Carbon logs retrieved successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CarbonLog'
+                  page:
+                    type: integer
+                  limit:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Carbon Logs]
+      summary: Create a daily carbon activity log
+      description: |
+        Creates the authenticated user's carbon log for one calendar day. The
+        server calculates `totalEmissionsKg`; clients never send emission
+        factors or totals.
+
+        **Formula:**
+        `totalEmissionsKg = round(commuteDistanceKm x commuteFactor + electricityKwh x 0.70, 2)`
+
+        **Units:** distance in kilometres (km), electricity in kilowatt-hours
+        (kWh), result in kilograms of CO2 equivalent (kg CO2e), rounded to two
+        decimal places.
+
+        | commuteMode | Factor (kg CO2e per km) |
+        |---|---|
+        | walking | 0.00 |
+        | cycling | 0.00 |
+        | public_transport (jeepney, bus) | 0.10 |
+        | private_vehicle (car, motorcycle, tricycle) | 0.19 |
+        | other | 0.15 (default fallback factor) |
+
+        Electricity factor: 0.70 kg CO2e per kWh. These factors are stored as
+        server-side configuration values and are the defaults for this design.
+
+        **`other` mode:** accepted, and calculated with the fixed fallback
+        factor of 0.15 kg CO2e per km. No custom factor can be supplied.
+
+        **One log per day:** each user may have only one carbon log per
+        calendar date, so household electricity is not counted twice. A second
+        POST for the same user and date returns 409; the user should update the
+        existing log with PUT /carbon-logs/{logId}. A date in the future
+        returns 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CarbonLogCreate'
+            example:
+              date: '2026-11-03'
+              commuteMode: public_transport
+              commuteDistanceKm: 12
+              electricityKwh: 4.5
+      responses:
+        '201':
+          description: Carbon log created and emissions calculated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarbonLog'
+              example:
+                id: 671abc1234567890abcdef12
+                userId: 64f123456789abcdef123456
+                date: '2026-11-03'
+                commuteMode: public_transport
+                commuteDistanceKm: 12
+                electricityKwh: 4.5
+                totalEmissionsKg: 4.35
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /carbon-logs/summary:
+    get:
+      tags: [Carbon Logs]
+      summary: Get the authenticated user's carbon-emission totals
+      description: >
+        Sums `totalEmissionsKg` over the authenticated user's own logs between
+        `startDate` and `endDate` (both inclusive). When omitted, all of the
+        user's logs are included. Returns 400 if `startDate` is after `endDate`.
+      parameters:
+        - name: startDate
+          in: query
+          required: false
+          description: Beginning of the summary period (YYYY-MM-DD).
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          required: false
+          description: End of the summary period (YYYY-MM-DD).
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Carbon summary retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarbonSummary'
+              example:
+                totalEmissionsKg: 24.75
+                logCount: 7
+                startDate: '2026-11-01'
+                endDate: '2026-11-07'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /carbon-logs/{logId}:
+    parameters:
+      - name: logId
+        in: path
+        required: true
+        description: Unique ID of the carbon log.
+        schema:
+          type: string
+    get:
+      tags: [Carbon Logs]
+      summary: Get a carbon log by ID
+      description: >
+        Only the user who created the log can retrieve it. Admins cannot read
+        individual carbon logs. Any other user receives 403. This matches the
+        filtering of GET /carbon-logs.
+      responses:
+        '200':
+          description: Carbon log retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarbonLog'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Carbon Logs]
+      summary: Update an owned carbon log
+      description: >
+        Only the owner can update the log. Emissions are recalculated with the
+        formula and factors documented in POST /carbon-logs. Changing `date`
+        to a date on which the user already has another log returns 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CarbonLogCreate'
+            example:
+              date: '2026-11-03'
+              commuteMode: walking
+              commuteDistanceKm: 2
+              electricityKwh: 3
+      responses:
+        '200':
+          description: Carbon log updated and emissions recalculated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarbonLog'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [Carbon Logs]
+      summary: Delete an owned carbon log
+      description: >
+        Only the owner can delete the log. The deleted log is removed from the
+        user's summary and from the community carbon total on the dashboard.
+      responses:
+        '200':
+          description: Carbon log deleted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+              example:
+                message: Carbon log deleted successfully.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /articles:
+    get:
+      security: []
+      tags: [Articles]
+      summary: List published educational articles
+      parameters:
+        - name: search
+          in: query
+          required: false
+          description: Search article titles or content.
+          schema:
+            type: string
+            maxLength: 100
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+      responses:
+        '200':
+          description: Articles retrieved successfully.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Article'
+        '400':
+          description: A query parameter is invalid (for example page or limit out of range, or search longer than 100 characters).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                message: Invalid query parameter "limit". Must be between 1 and 100.
+                error: ValidationError
+    post:
+      tags: [Articles]
+      summary: Create an educational article
+      description: Admin-only operation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArticleWrite'
+            example:
+              title: Ways to Reduce Plastic Waste
+              content: Use reusable containers and dispose of waste properly.
+              category: water_pollution
+      responses:
+        '201':
+          description: Article created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Article'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /articles/{articleId}:
+    get:
+      security: []
+      tags: [Articles]
+      summary: Get an educational article by ID
+      parameters:
+        - name: articleId
+          in: path
+          required: true
+          description: Unique ID of the article.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Article retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Article'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    parameters:
+      - name: articleId
+        in: path
+        required: true
+        description: Unique ID of the article.
+        schema:
+          type: string
+    put:
+      tags: [Articles]
+      summary: Update an educational article
+      description: Admin-only operation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArticleWrite'
+            example:
+              title: Updated Pollution Prevention Tips
+              content: Updated educational content.
+              category: carbon_emission
+      responses:
+        '200':
+          description: Article updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Article'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Articles]
+      summary: Delete an educational article
+      description: Admin-only operation.
+      responses:
+        '200':
+          description: Article deleted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /feedback:
+    get:
+      tags: [Feedback]
+      summary: List submitted feedback
+      description: Admin-only operation.
+      responses:
+        '200':
+          description: Feedback retrieved successfully.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Feedback'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Feedback]
+      summary: Submit feedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackCreate'
+            example:
+              subject: Map suggestion
+              message: Please make report locations easier to view.
+      responses:
+        '201':
+          description: Feedback submitted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Feedback'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /feedback/{feedbackId}:
+    delete:
+      tags: [Feedback]
+      summary: Delete submitted feedback
+      description: Admin-only operation.
+      parameters:
+        - name: feedbackId
+          in: path
+          required: true
+          description: Unique ID of the feedback entry.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Feedback deleted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /users:
+    get:
+      tags: [Users]
+      summary: List registered users
+      description: Admin-only operation.
+      parameters:
+        - name: role
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [user, admin]
+        - name: barangay
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Users retrieved successfully.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /users/{userId}:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        description: Unique ID of the user.
+        schema:
+          type: string
+    get:
+      tags: [Users]
+      summary: Get a user by ID
+      description: Admin-only operation.
+      responses:
+        '200':
+          description: User retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Users]
+      summary: Delete a user account
+      description: |
+        Admin-only operation. Deleting an account affects related data as follows:
+
+        - **Pollution reports:** kept so community pollution data is not lost.
+          `userId` is set to `null` (anonymized). Report status and reason do not change.
+        - **Carbon logs:** permanently deleted together with the account.
+        - **Feedback:** permanently deleted together with the account.
+        - **Dashboard totals:** not stored; recalculated on each request, so
+          `communityCarbonTotalKg` drops by the deleted logs immediately, while
+          `totalReports` and `reportsByStatus` stay the same.
+        - **Sessions:** the user's tokens stop working; later requests return 401.
+
+        An admin cannot delete their own account or the last remaining admin
+        account (409).
+      responses:
+        '200':
+          description: User deleted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+              example:
+                message: User deleted. Reports anonymized; carbon logs and feedback removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /dashboard/stat:
+    get:
+      tags: [Dashboard]
+      summary: Get community pollution and carbon statistics
+      description: >
+        Totals are calculated from current data on every request. Deleting a
+        carbon log or a user account lowers `communityCarbonTotalKg`; reports
+        of deleted users are kept, so report counts are unchanged.
+      parameters:
+        - name: barangay
+          in: query
+          required: false
+          description: Optionally limit report statistics to one barangay.
+          schema:
+            type: string
+        - name: weeks
+          in: query
+          required: false
+          description: Number of most recent weeks included in communityCarbonByWeek.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 26
+            default: 8
+      responses:
+        '200':
+          description: Dashboard statistics retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardStats'
+              example:
+                totalReports: 120
+                reportsByBarangay:
+                  - barangay: Carmen
+                    count: 25
+                reportsByStatus:
+                  pending: 20
+                  verified: 50
+                  rejected: 10
+                  resolved: 40
+                communityCarbonTotalKg: 845.6
+                communityCarbonBySource:
+                  transportKg: 480.2
+                  electricityKg: 365.4
+                communityCarbonByWeek:
+                  - weekStart: '2026-10-19'
+                    totalEmissionsKg: 98.4
+                  - weekStart: '2026-10-26'
+                    totalEmissionsKg: 112.9
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [user, admin]
+        barangay:
+          type: string
+      required: [id, fullName, email, role]
+
+    RegisterRequest:
+      type: object
+      properties:
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+        barangay:
+          type: string
+      required: [fullName, email, password, barangay]
+
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+      required: [email, password]
+
+    AuthResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        token:
+          type: string
+        user:
+          $ref: '#/components/schemas/User'
+      required: [message, token, user]
+
+    Location:
+      type: object
+      properties:
+        latitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+      required: [latitude, longitude]
+
+    ReportCreate:
+      type: object
+      properties:
+        category:
+          type: string
+          enum: [water_pollution, carbon_emission]
+        description:
+          type: string
+        barangay:
+          type: string
+        location:
+          $ref: '#/components/schemas/Location'
+        photoUrl:
+          type: string
+          format: uri
+      required: [category, description, barangay, location]
+
+    ReportUpdate:
+      allOf:
+        - $ref: '#/components/schemas/ReportCreate'
+
+    ReportStatusUpdate:
+      description: Admin moderation request. A reason is required for rejected and resolved.
+      oneOf:
+        - $ref: '#/components/schemas/ReportVerifyRequest'
+        - $ref: '#/components/schemas/ReportReasonedStatusRequest'
+
+    ReportVerifyRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [verified]
+      required: [status]
+
+    ReportReasonedStatusRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [rejected, resolved]
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+          description: Required explanation shown to the report owner.
+      required: [status, reason]
+
+    Report:
+      allOf:
+        - $ref: '#/components/schemas/ReportCreate'
+        - type: object
+          properties:
+            id:
+              type: string
+            userId:
+              type: string
+              nullable: true
+              description: Owner of the report. Null after the owner's account is deleted (anonymized).
+            status:
+              type: string
+              enum: [pending, verified, rejected, resolved]
+            statusReason:
+              type: string
+              nullable: true
+              description: Admin reason for a rejected or resolved status. Null for pending or verified reports.
+            createdAt:
+              type: string
+              format: date-time
+          required: [id, userId, status, createdAt]
+
+    CarbonLogCreate:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+          description: Calendar date of the log (YYYY-MM-DD). Must not be in the future. One log per user per date.
+        commuteMode:
+          type: string
+          enum: [walking, cycling, public_transport, private_vehicle, other]
+          description: >
+            Commute mode. Factors in kg CO2e per km: walking 0, cycling 0,
+            public_transport 0.10, private_vehicle 0.19, other 0.15 (fallback).
+        commuteDistanceKm:
+          type: number
+          minimum: 0
+          maximum: 500
+          description: Distance travelled in kilometres.
+        electricityKwh:
+          type: number
+          minimum: 0
+          maximum: 1000
+          description: Household electricity used that day in kWh (factor 0.70 kg CO2e per kWh).
+      required: [date, commuteMode, commuteDistanceKm, electricityKwh]
+
+    CarbonLog:
+      allOf:
+        - $ref: '#/components/schemas/CarbonLogCreate'
+        - type: object
+          properties:
+            id:
+              type: string
+            userId:
+              type: string
+            totalEmissionsKg:
+              type: number
+              description: Server-calculated emissions in kg CO2e, rounded to two decimals.
+            createdAt:
+              type: string
+              format: date-time
+          required: [id, userId, totalEmissionsKg]
+
+    CarbonSummary:
+      type: object
+      properties:
+        totalEmissionsKg:
+          type: number
+        logCount:
+          type: integer
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+      required: [totalEmissionsKg, logCount]
+
+    ArticleWrite:
+      type: object
+      properties:
+        title:
+          type: string
+        content:
+          type: string
+        category:
+          type: string
+          enum: [water_pollution, carbon_emission, general]
+      required: [title, content, category]
+
+    Article:
+      allOf:
+        - $ref: '#/components/schemas/ArticleWrite'
+        - type: object
+          properties:
+            id:
+              type: string
+            createdAt:
+              type: string
+              format: date-time
+          required: [id, createdAt]
+
+    FeedbackCreate:
+      type: object
+      properties:
+        subject:
+          type: string
+        message:
+          type: string
+      required: [subject, message]
+
+    Feedback:
+      allOf:
+        - $ref: '#/components/schemas/FeedbackCreate'
+        - type: object
+          properties:
+            id:
+              type: string
+            userId:
+              type: string
+            createdAt:
+              type: string
+              format: date-time
+          required: [id, userId, createdAt]
+
+    DashboardStats:
+      type: object
+      properties:
+        totalReports:
+          type: integer
+        reportsByBarangay:
+          type: array
+          items:
+            type: object
+            properties:
+              barangay:
+                type: string
+              count:
+                type: integer
+            required: [barangay, count]
+        reportsByStatus:
+          type: object
+          properties:
+            pending:
+              type: integer
+            verified:
+              type: integer
+            rejected:
+              type: integer
+            resolved:
+              type: integer
+        communityCarbonTotalKg:
+          type: number
+          description: Sum of totalEmissionsKg over all carbon logs, in kg CO2e.
+        communityCarbonBySource:
+          type: object
+          description: Community total split by source. transportKg + electricityKg equals communityCarbonTotalKg.
+          properties:
+            transportKg:
+              type: number
+            electricityKg:
+              type: number
+          required: [transportKg, electricityKg]
+        communityCarbonByWeek:
+          type: array
+          description: Weekly community totals for the last `weeks` weeks, oldest first. Weeks start on Monday.
+          items:
+            type: object
+            properties:
+              weekStart:
+                type: string
+                format: date
+              totalEmissionsKg:
+                type: number
+            required: [weekStart, totalEmissionsKg]
+      required: [totalReports, reportsByBarangay, reportsByStatus, communityCarbonTotalKg]
+
+    Message:
+      type: object
+      properties:
+        message:
+          type: string
+      required: [message]
+
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+        error:
+          type: string
+      required: [message]
+
+  responses:
+    BadRequest:
+      description: The request contains invalid or missing information.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: Invalid request data.
+            error: ValidationError
+    Unauthorized:
+      description: Authentication is required or the token is invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: Authentication required.
+            error: Unauthorized
+    Forbidden:
+      description: The authenticated user does not have permission.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: Admin access required.
+            error: Forbidden
+    Conflict:
+      description: The request conflicts with the current state of the resource (duplicate daily log, invalid status transition, or protected account).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: A carbon log already exists for this date.
+            error: Conflict
+    NotFound:
+      description: The requested resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: Resource not found.
+            error: NotFound
+
+security:
+  - bearerAuth: []
