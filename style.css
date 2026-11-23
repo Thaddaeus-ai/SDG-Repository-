@@ -274,7 +274,7 @@ input[type="text"], input[type="number"], select, textarea {
 }
 textarea { padding: 12px; }
 
-/* ---------- Responsive ---------- */
+/* Responsive UI  */
 @media (max-width: 900px) {
   .sidebar { flex-basis: 100%; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 16px 20px; gap: 12px 20px; }
   .nav { flex-direction: row; flex-wrap: wrap; }
@@ -284,3 +284,26 @@ textarea { padding: 12px; }
   .grid--5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .map-popup { position: static; width: auto; margin: 16px; }
 }
+    /* Page-specific additions. Colors reuse the variables from style.css. */
+    .field-stack { display: flex; flex-direction: column; gap: 6px; }
+    input[type="email"], input[type="password"] {
+      width: 100%; min-height: 48px; padding: 0 12px;
+      border: 1px solid #8fa39d; border-radius: 10px; background: #fff;
+      font: 1rem var(--font-body); color: var(--ink);
+    }
+    .notice { padding: 12px 14px; border: var(--border); border-radius: 12px; background: var(--paper); font-size: 0.9375rem; }
+    .notice--warn { background: #fbe9c3; }
+    .notice--ok { background: #dcebdc; }
+    .notice--error { background: #f6d9d0; }
+    .empty { padding: 28px; text-align: center; border: 2px dashed var(--line); border-radius: var(--radius); color: var(--muted); }
+    .hint { font-size: 0.8125rem; color: var(--muted); font-weight: 400; }
+    button.link { background: none; border: 0; padding: 6px 8px; font: 700 0.875rem var(--font-body); color: var(--rust); cursor: pointer; text-decoration: underline; }
+
+     /*Register and Log table*/
+    .log-wrap { overflow-x: auto; }
+    .reg-log { width: 100%; border-collapse: collapse; font-size: 0.9375rem; }
+    .reg-log th { text-align: left; padding: 8px 10px; border-bottom: var(--border); font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--rust); white-space: nowrap; }
+    .reg-log td { padding: 10px; border-bottom: 1.5px dashed #d2cab4; vertical-align: top; }
+    .reg-log td.when { white-space: nowrap; color: var(--muted); } .tag--ok { background: var(--green); }
+    .tag--fail { background: var(--clay); } .tag--warn { background: var(--sun); color: var(--ink); border: 1.5px solid var(--ink); 
+    }
