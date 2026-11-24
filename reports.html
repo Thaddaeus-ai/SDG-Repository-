@@ -197,9 +197,11 @@
 
   // ---------- Map ----------
   var map = L.map('map', { scrollWheelZoom: false }).setView(CDO, 13);
+  // Note: OSM's tile server requires a Referer header, so serve this page over http(s)
+  // (e.g. python -m http.server 8000) rather than opening it as a file://.
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    referrerPolicy: 'strict-origin-when-cross-origin', // OSM requires a Referer header; works only over http(s), not file://
+    referrerPolicy: 'strict-origin-when-cross-origin',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   }).addTo(map);
   map.on('focus', function () { map.scrollWheelZoom.enable(); });
@@ -231,7 +233,14 @@
     });
   }
 
-  function render() {
+  function fitToMarkers() {
+    var ids = Object.keys(markers);
+    if (!ids.length) { map.setView(CDO, 13); return; }
+    var bounds = L.latLngBounds(ids.map(function (id) { return markers[id].getLatLng(); }));
+    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+  }
+
+  function render(fit) {
     var list = visibleReports();
 
     // markers
@@ -243,6 +252,7 @@
       m.on('click', function () { setActive(r.id, false); });
       markers[r.id] = m;
     });
+    if (fit) fitToMarkers();
 
     // cards
     var wrap = $('report-list');
@@ -312,9 +322,9 @@
     document.querySelectorAll('#status-chips .chip').forEach(function (c) {
       c.setAttribute('aria-current', c === btn ? 'true' : 'false');
     });
-    render();
+    render(true);
   });
-  $('filter-barangay').addEventListener('change', function (e) { filter.barangay = e.target.value; render(); });
+  $('filter-barangay').addEventListener('change', function (e) { filter.barangay = e.target.value; render(true); });
 
   // ---------- Pick a location ----------
   function setPick(lat, lng) {
@@ -357,13 +367,13 @@
         if (!res.ok) { throw new Error('http ' + res.status); }
         return res.json();
       })
-      .then(function (data) { reports = data.reports || []; notice.hidden = true; render(); })
+      .then(function (data) { reports = data.reports || []; notice.hidden = true; render(true); })
       .catch(function (err) {
         reports = SAMPLE.slice();
         showNotice(notice, err.message === 'auth'
           ? 'Log in to see your reports. Showing sample reports for now.'
           : 'The API is not reachable. Showing sample reports for now.', 'warn');
-        render();
+        render(true);
       });
   }
 
