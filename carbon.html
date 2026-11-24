@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My carbon · PollutionTracker</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .stats { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 24px; }
+    .stat { border: var(--border); border-radius: var(--radius); padding: 18px 20px; }
+    .stat b { display: block; font-size: 2.25rem; font-weight: 800; line-height: 1.1; margin: 6px 0; }
+    .stat--a { background: #f2b84b; color: var(--ink); } .stat--b { background: var(--river); color: #fff; } .stat--c { background: #2f6b45; color: #fff; }
+    .bars { display: flex; align-items: flex-end; gap: 10px; height: 150px; margin-top: 12px; }
+    .bar { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; font-size: 0.75rem; }
+    .bar i { display: block; width: 100%; background: var(--river); border-radius: 6px 6px 0 0; min-height: 2px; }
+    .log { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; padding: 14px 16px; border: var(--border); border-radius: 14px; background: var(--paper); margin-bottom: 12px; }
+    .log p { margin: 0; } .log .kg { font-weight: 800; font-size: 1.125rem; }
+    .mini { font: 700 0.8125rem var(--font-body); padding: 6px 12px; border: var(--border); border-radius: 999px; background: #fff; color: var(--ink); cursor: pointer; margin-left: 6px; }
+    .field-stack { display: flex; flex-direction: column; gap: 6px; }
+    .notice { padding: 12px 14px; border: var(--border); border-radius: 12px; background: var(--paper); font-size: 0.9375rem; }
+    .notice--warn { background: #fbe9c3; } .notice--ok { background: #dcebdc; } .notice--error { background: #f6d9d0; }
+    .empty { padding: 28px; text-align: center; border: 2px dashed var(--line); border-radius: var(--radius); color: var(--muted); }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">
+      <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="20" fill="#f2b84b"/><path d="M20 8C15 14 12 18 12 22a8 8 0 0 0 16 0C28 18 25 14 20 8Z" fill="#1f3d2b"/></svg>
+      <span>Pollution<br>Tracker</span>
+    </a>
+    <a class="btn btn--accent" href="reports.html#new-report">Report pollution</a>
+    <nav class="nav" aria-label="Main">
+      <a href="index.html">Overview</a>
+      <a href="reports.html">Map and reports</a>
+      <a href="carbon.html" aria-current="page">My carbon</a>
+      <a href="learn.html">Learn</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="badges">
+        <span class="badge badge--sdg13">SDG 13 Climate Action</span>
+        <span class="badge badge--sdg4">SDG 4 Quality Education</span>
+      </div>
+      <div class="user"><span class="avatar">?</span><span><strong>Guest</strong><small>Not logged in</small></span></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="page-head">
+      <span class="eyebrow">Your footprint</span>
+      <h1>My carbon.</h1>
+      <p>Log how you get around and how much electricity you use. We turn it into CO₂e using the emission factors stored in our database.</p>
+    </header>
+
+    <div id="data-notice" class="notice notice--warn" role="status" hidden></div>
+    <div id="auth"></div>
+
+    <div id="content" hidden>
+      <div class="stats" id="stats"></div>
+
+      <div class="row">
+        <section class="card" style="flex: 1 1 340px; max-width: 440px">
+          <h2 id="form-title">Add a log</h2>
+          <form id="log-form" class="field-stack" style="gap:14px" novalidate>
+            <div class="field-stack"><label for="f-type">What are you logging?</label>
+              <select id="f-type"><option value="commute">Commute</option><option value="electricity">Electricity</option></select></div>
+            <div class="field-stack"><label for="f-factor">Mode / source</label><select id="f-factor"></select></div>
+            <div class="field-stack"><label for="f-qty" id="q-label">Distance (km)</label><input id="f-qty" type="number" step="any" min="0" inputmode="decimal"></div>
+            <div class="field-stack"><label for="f-date">Date</label><input id="f-date" type="date"></div>
+            <div class="field-stack"><label for="f-notes">Notes (optional)</label><input id="f-notes" maxlength="300"></div>
+            <p id="preview" class="muted" aria-live="polite" style="margin:0"></p>
+            <div id="form-msg" class="notice" role="status" hidden></div>
+            <button id="f-go" class="btn btn--dark btn--block" type="submit">Add log</button>
+            <button id="f-cancel" class="btn btn--block" type="button" hidden>Cancel edit</button>
+          </form>
+        </section>
+
+        <section style="flex: 2 1 460px">
+          <div class="card" style="margin-bottom:24px">
+            <h2>By month</h2>
+            <div class="bars" id="bars"></div>
+          </div>
+          <div class="section-head" style="margin-bottom:16px"><h2>Your logs</h2></div>
+          <div id="log-list"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="auth.js"></script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (i) { return document.getElementById(i); };
+  function el(t, c, x) { var e = document.createElement(t); if (c) e.className = c; if (x !== undefined) e.textContent = x; return e; }
+  function notice(n, t, k) { n.textContent = t; n.className = 'notice' + (k ? ' notice--' + k : ''); n.hidden = false; }
+  function fmt(kg) { return kg >= 1000 ? (kg / 1000).toFixed(2) + ' t' : (Math.round(kg * 10) / 10) + ' kg'; }
+  function today() { var d = new Date(); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); }
+  var factors = [], editing = null;
+  function factorOf(k) { return factors.filter(function (f) { return f.key === k; })[0]; }
+
+  function fillFactors(sel) {
+    var type = $('f-type').value, s = $('f-factor');
+    s.textContent = '';
+    factors.filter(function (f) { return f.type === type; }).forEach(function (f) {
+      var o = el('option', '', f.label + ' (per ' + f.unit + ')'); o.value = f.key; s.appendChild(o);
+    });
+    if (sel) s.value = sel;
+    $('q-label').textContent = type === 'commute' ? 'Distance (km)' : 'Electricity used (kWh)';
+    preview();
+  }
+  function preview() {
+    var f = factorOf($('f-factor').value), q = parseFloat($('f-qty').value);
+    $('preview').textContent = f && q > 0 ? '\u2248 ' + fmt(q * f.kgCO2ePerUnit) + ' CO\u2082e' : '';
+  }
+  function reset() {
+    editing = null; $('f-qty').value = ''; $('f-notes').value = ''; $('f-date').value = today();
+    $('f-go').textContent = 'Add log'; $('form-title').textContent = 'Add a log'; $('f-cancel').hidden = true; preview();
+  }
+
+  function renderSummary(s) {
+    var box = $('stats'); box.textContent = '';
+    [['stat--a', 'Total so far', fmt(s.totalKg || 0), 'CO\u2082e across all logs'],
+     ['stat--b', 'Last 30 days', fmt(s.last30DaysKg || 0), 'CO\u2082e'],
+     ['stat--c', 'Logs', String(s.logCount || 0), 'activities recorded']].forEach(function (c) {
+      var d = el('div', 'stat ' + c[0]); d.appendChild(el('span', '', c[1])); d.appendChild(el('b', '', c[2])); d.appendChild(el('span', '', c[3])); box.appendChild(d);
+    });
+    var bars = $('bars'); bars.textContent = '';
+    var months = (s.byMonth || []).slice(-6), max = Math.max.apply(null, months.map(function (m) { return m.kg; }).concat([1]));
+    if (!months.length) bars.appendChild(el('div', 'empty', 'Add your first log to see your monthly totals.'));
+    months.forEach(function (m) {
+      var p = m.month.split('-'), b = el('div', 'bar');
+      b.appendChild(el('span', '', Math.round(m.kg * 10) / 10));
+      var i = el('i'); i.style.height = Math.max(2, (m.kg / max) * 100 * 0.7) + '%'; b.appendChild(i);
+      b.appendChild(el('span', 'muted', new Date(p[0], p[1] - 1).toLocaleString('en', { month: 'short' })));
+      bars.appendChild(b);
+    });
+  }
+
+  function renderLogs(logs) {
+    var box = $('log-list'); box.textContent = '';
+    if (!logs.length) { box.appendChild(el('div', 'empty', 'No logs yet. Add what you did today.')); return; }
+    logs.forEach(function (l) {
+      var f = factorOf(l.factorKey), row = el('div', 'log'), left = el('div');
+      left.appendChild(el('p', '', (f ? f.label : l.factorKey) + ' \u00b7 ' + l.quantity + ' ' + (l.unit || '')));
+      left.appendChild(el('p', 'muted', new Date(l.date).toLocaleDateString('en-PH', { day: 'numeric', month: 'short', year: 'numeric' }) + (l.notes ? ' \u00b7 ' + l.notes : '')));
+      var right = el('div'); right.appendChild(el('span', 'kg', fmt(l.emissionsKg)));
+      var e = el('button', 'mini', 'Edit'); e.type = 'button'; e.onclick = function () { edit(l); };
+      var d = el('button', 'mini', 'Delete'); d.type = 'button'; d.onclick = function () { del(l); };
+      right.appendChild(e); right.appendChild(d); row.appendChild(left); row.appendChild(right); box.appendChild(row);
+    });
+  }
+  function edit(l) {
+    editing = l.id; $('f-type').value = l.type; fillFactors(l.factorKey);
+    $('f-qty').value = l.quantity; $('f-date').value = String(l.date).slice(0, 10); $('f-notes').value = l.notes || '';
+    $('f-go').textContent = 'Save changes'; $('form-title').textContent = 'Edit log'; $('f-cancel').hidden = false; preview();
+    $('log-form').scrollIntoView({ behavior: 'smooth' });
+  }
+  function del(l) {
+    if (!confirm('Delete this log?')) return;
+    PT.api('/carbon-logs/' + l.id, 'DELETE').then(function () { if (editing === l.id) reset(); loadData(); });
+  }
+  function loadData() {
+    return Promise.all([PT.api('/carbon-logs/summary'), PT.api('/carbon-logs?limit=50')]).then(function (r) {
+      if (r[0].status === 401) return showLogin();
+      renderSummary(r[0].data); renderLogs(r[1].data.logs || []);
+    });
+  }
+  function start() {
+    $('auth').textContent = ''; $('content').hidden = false;
+    PT.api('/carbon-logs/factors').then(function (r) {
+      factors = r.data.factors || []; fillFactors(); reset(); return loadData();
+    }).catch(function () { notice($('data-notice'), 'Can\u2019t reach the server. Is the backend running (npm start)?', 'warn'); });
+  }
+  function showLogin() { $('content').hidden = true; PT.authCard($('auth'), start); }
+
+  $('f-type').onchange = function () { fillFactors(); };
+  $('f-factor').onchange = preview; $('f-qty').oninput = preview; $('f-cancel').onclick = reset;
+  $('log-form').onsubmit = function (e) {
+    e.preventDefault();
+    var msg = $('form-msg'), qty = parseFloat($('f-qty').value);
+    if (!(qty > 0)) return notice(msg, 'Enter an amount greater than 0.', 'error');
+    var body = { type: $('f-type').value, factorKey: $('f-factor').value, quantity: qty, date: $('f-date').value || undefined, notes: $('f-notes').value.trim() };
+    PT.api(editing ? '/carbon-logs/' + editing : '/carbon-logs', editing ? 'PUT' : 'POST', body).then(function (r) {
+      if (r.status === 200 || r.status === 201) { notice(msg, editing ? 'Log updated.' : 'Log added.', 'ok'); reset(); loadData(); }
+      else if (r.status === 401) showLogin();
+      else notice(msg, r.data.message || 'Could not save the log.', 'error');
+    }).catch(function () { notice(msg, 'Can\u2019t reach the server.', 'error'); });
+  };
+
+  PT.init().then(function (user) {
+    if (PT.offline) notice($('data-notice'), 'Can\u2019t reach the server. Is the backend running (npm start)?', 'warn');
+    if (user) start(); else showLogin();
+  });
+})();
+</script>
+</body>
+</html>

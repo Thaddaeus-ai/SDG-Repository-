@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Learn · PollutionTracker</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    button.chip { font: 700 0.9375rem var(--font-body); color: var(--ink); cursor: pointer; }
+    .tag--water { background: var(--river); } .tag--carbon { background: var(--rust); }
+    .art-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); margin: 20px 0 28px; }
+    .art { cursor: pointer; } .art h3 { font-size: 1.125rem; }
+    .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .reader p { max-width: 68ch; line-height: 1.65; }
+    .mini { font: 700 0.875rem var(--font-body); padding: 8px 14px; border: var(--border); border-radius: 999px; background: #fff; color: var(--ink); cursor: pointer; margin-right: 8px; }
+    .field-stack { display: flex; flex-direction: column; gap: 6px; }
+    .notice { padding: 12px 14px; border: var(--border); border-radius: 12px; background: var(--paper); font-size: 0.9375rem; }
+    .notice--warn { background: #fbe9c3; } .notice--ok { background: #dcebdc; } .notice--error { background: #f6d9d0; }
+    .empty { padding: 28px; text-align: center; border: 2px dashed var(--line); border-radius: var(--radius); color: var(--muted); }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">
+      <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="20" fill="#f2b84b"/><path d="M20 8C15 14 12 18 12 22a8 8 0 0 0 16 0C28 18 25 14 20 8Z" fill="#1f3d2b"/></svg>
+      <span>Pollution<br>Tracker</span>
+    </a>
+    <a class="btn btn--accent" href="reports.html#new-report">Report pollution</a>
+    <nav class="nav" aria-label="Main">
+      <a href="index.html">Overview</a>
+      <a href="reports.html">Map and reports</a>
+      <a href="carbon.html">My carbon</a>
+      <a href="learn.html" aria-current="page">Learn</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="badges">
+        <span class="badge badge--sdg13">SDG 13 Climate Action</span>
+        <span class="badge badge--sdg4">SDG 4 Quality Education</span>
+      </div>
+      <div class="user"><span class="avatar">?</span><span><strong>Guest</strong><small>Not logged in</small></span></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="page-head">
+      <span class="eyebrow">Learn</span>
+      <h1>Small changes, cleaner city.</h1>
+      <p>Tips and short reads on cutting pollution and carbon emissions, written by our admins for Cagayan de Oro residents.</p>
+    </header>
+
+    <div id="data-notice" class="notice notice--warn" role="status" hidden></div>
+    <div class="chips" id="chips" role="group" aria-label="Filter articles"></div>
+    <div id="list" class="art-grid"></div>
+
+    <section id="reader" class="card reader" hidden></section>
+
+    <section id="admin" class="card" style="max-width:640px; margin-top:28px" hidden>
+      <h2>Post an article</h2>
+      <form id="art-form" class="field-stack" style="gap:14px" novalidate>
+        <div class="field-stack"><label for="a-title">Title</label><input id="a-title" maxlength="150"></div>
+        <div class="field-stack"><label for="a-summary">Short summary</label><input id="a-summary" maxlength="300"></div>
+        <div class="field-stack"><label for="a-tags">Tags (comma separated)</label><input id="a-tags" placeholder="water, waste"></div>
+        <div class="field-stack"><label for="a-body">Article (leave a blank line between paragraphs)</label><textarea id="a-body" rows="8"></textarea></div>
+        <div id="a-msg" class="notice" role="status" hidden></div>
+        <button class="btn btn--dark btn--block" type="submit">Publish</button>
+      </form>
+    </section>
+  </main>
+</div>
+
+<script src="auth.js"></script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (i) { return document.getElementById(i); };
+  function el(t, c, x) { var e = document.createElement(t); if (c) e.className = c; if (x !== undefined) e.textContent = x; return e; }
+  function notice(n, t, k) { n.textContent = t; n.className = 'notice' + (k ? ' notice--' + k : ''); n.hidden = false; }
+
+  var SAMPLE = [
+    { id: 'sample-1', title: 'Five ways to cut your commute emissions', summary: 'Small changes to how you get around add up.', tags: ['carbon', 'commute'], body: 'Walk or cycle short trips, share rides, and choose public transport over private cars when you can.\n\nKeeping your motorcycle or car tuned also reduces smoke.' },
+    { id: 'sample-2', title: 'Keep waste out of our rivers', summary: 'What residents can do to protect local waterways.', tags: ['water', 'waste'], body: 'Never dump trash in creeks or drainage canals. Segregate waste and join barangay clean-ups.\n\nReport illegal dumping through PollutionTracker.' }
+  ];
+  var articles = [], saved = {}, tag = 'all', offline = false;
+  var isSample = function (id) { return String(id).indexOf('sample-') === 0; };
+
+  function load() {
+    return PT.api('/articles?limit=50').then(function (r) {
+      if (r.status !== 200) throw new Error('bad'); articles = r.data.articles || []; offline = false;
+    }).catch(function () { articles = SAMPLE.slice(); offline = true; })
+      .then(function () {
+        if (!PT.me || offline) return;
+        return PT.api('/articles/saved').then(function (r) { saved = {}; (r.data.articles || []).forEach(function (a) { saved[a.id] = 1; }); });
+      }).then(function () {
+        if (offline) notice($('data-notice'), 'The API is not reachable. Showing sample articles for now.', 'warn'); else $('data-notice').hidden = true;
+        $('admin').hidden = !(PT.me && PT.me.role === 'admin' && !offline);
+        renderChips(); renderList();
+      });
+  }
+
+  function renderChips() {
+    var box = $('chips'), tags = {};
+    articles.forEach(function (a) { (a.tags || []).forEach(function (t) { tags[t] = 1; }); });
+    var items = [['all', 'All']].concat(PT.me ? [['saved', 'Saved']] : []).concat(Object.keys(tags).sort().map(function (t) { return [t, t.charAt(0).toUpperCase() + t.slice(1)]; }));
+    box.textContent = '';
+    items.forEach(function (it) {
+      var b = el('button', 'chip', it[1]); b.type = 'button'; b.setAttribute('aria-current', it[0] === tag ? 'true' : 'false');
+      b.onclick = function () { tag = it[0]; renderChips(); renderList(); }; box.appendChild(b);
+    });
+  }
+
+  function renderList() {
+    var box = $('list'); box.textContent = '';
+    var shown = articles.filter(function (a) { return tag === 'all' || (tag === 'saved' ? saved[a.id] : (a.tags || []).indexOf(tag) > -1); });
+    if (!shown.length) { box.appendChild(el('div', 'empty', tag === 'saved' ? 'You have not saved any articles yet.' : 'No articles yet.')); return; }
+    shown.forEach(function (a) {
+      var c = el('article', 'card art'); c.tabIndex = 0;
+      c.appendChild(el('h3', '', a.title)); if (a.summary) c.appendChild(el('p', '', a.summary));
+      var t = el('div', 'tags'); (a.tags || []).forEach(function (x) { t.appendChild(el('span', 'tag tag--water', x)); }); c.appendChild(t);
+      c.onclick = function () { open(a.id); };
+      c.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(a.id); } };
+      box.appendChild(c);
+    });
+  }
+
+  function open(id) {
+    var get = isSample(id) ? Promise.resolve({ status: 200, data: SAMPLE.filter(function (s) { return s.id === id; })[0] }) : PT.api('/articles/' + id);
+    get.then(function (r) { if (r.status === 200) renderReader(r.data); });
+  }
+  function renderReader(a) {
+    var box = $('reader'); box.textContent = ''; box.hidden = false;
+    box.appendChild(el('h2', '', a.title));
+    String(a.body || '').split(/\n{2,}/).forEach(function (p) { if (p.trim()) box.appendChild(el('p', '', p.trim())); });
+    var bar = el('div'); bar.style.marginTop = '18px';
+    if (!isSample(a.id) && PT.me) {
+      var s = el('button', 'mini', saved[a.id] ? 'Unsave' : 'Save for later'); s.type = 'button';
+      s.onclick = function () { PT.api('/articles/' + a.id + '/save', saved[a.id] ? 'DELETE' : 'PUT').then(function (r) { if (r.status === 204) { if (saved[a.id]) delete saved[a.id]; else saved[a.id] = 1; renderReader(a); renderList(); } }); };
+      bar.appendChild(s);
+    } else if (!PT.me) {
+      var m = el('span', 'muted'); m.appendChild(document.createTextNode('To save articles, ')); var l = el('a', '', 'log in on My carbon'); l.href = 'carbon.html'; m.appendChild(l); bar.appendChild(m);
+    }
+    if (PT.me && PT.me.role === 'admin' && !isSample(a.id)) {
+      var d = el('button', 'mini', 'Delete'); d.type = 'button';
+      d.onclick = function () { if (confirm('Delete this article?')) PT.api('/articles/' + a.id, 'DELETE').then(function () { box.hidden = true; load(); }); };
+      bar.appendChild(d);
+    }
+    var x = el('button', 'mini', 'Close'); x.type = 'button'; x.onclick = function () { box.hidden = true; }; bar.appendChild(x);
+    box.appendChild(bar); box.scrollIntoView({ behavior: 'smooth' });
+  }
+
+  $('art-form').onsubmit = function (e) {
+    e.preventDefault();
+    var msg = $('a-msg');
+    var body = { title: $('a-title').value.trim(), summary: $('a-summary').value.trim(), body: $('a-body').value,
+      tags: $('a-tags').value.split(',').map(function (t) { return t.trim(); }).filter(Boolean) };
+    PT.api('/articles', 'POST', body).then(function (r) {
+      if (r.status === 201) { notice(msg, 'Article published.', 'ok'); $('art-form').reset(); load(); }
+      else notice(msg, r.data.message || 'Could not publish the article.', 'error');
+    }).catch(function () { notice(msg, 'Can\u2019t reach the server.', 'error'); });
+  };
+
+  PT.init().then(load);
+})();
+</script>
+</body>
+</html>
